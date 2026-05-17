@@ -3,12 +3,13 @@ import { connectDB } from '@/lib/db';
 import { Order } from '@/models/Order';
 import { getCurrentUser } from '@/lib/auth';
 
-export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await connectDB();
-  const order = await Order.findById(params.id).populate('user', 'name email');
+  const { id } = await params;
+  const order = await Order.findById(id).populate('user', 'name email');
   if (!order) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   if (user.role !== 'admin' && order.user._id.toString() !== user.userId) {
