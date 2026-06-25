@@ -140,10 +140,12 @@ function StripeCheckoutForm(props: FormProps) {
 
       const { error: confirmError } = await stripe.confirmPayment({
         elements,
-        confirmParams: { return_url: `${window.location.origin}/products?payment=success` },
+        confirmParams: { return_url: `${window.location.origin}/orders/${data.order._id}` },
       });
 
       if (confirmError) throw new Error(confirmError.message);
+      // Redirect to order detail page on success
+      router.push(`/orders/${data.order._id}`);
     } catch (err: any) {
       toast.error(err.message);
       setLoading(false);

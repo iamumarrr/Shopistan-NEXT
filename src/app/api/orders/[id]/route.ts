@@ -1,35 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/db';
-import { Order } from '@/models/Order';
+import { supabaseAdmin, mapOrder } from '@/lib/supabase';
 import { getCurrentUser } from '@/lib/auth';
 
-export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(
+  _: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  await connectDB();
   const { id } = await params;
-  const order = await Order.findById(id).populate('user', 'name email');
-  if (!order) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const { data: order, error } = await supabaseAdmin
+    .from('orders')
+    .select('*, user:users(id,name,email)')
+    .eq('id', id)
+    .single();
 
-  if (user.role !== 'admin' && order.user._id.toString() !== user.userId) {
+  if (error || !order) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  // Check authorization: admin can view all, customers can only view their own
+  if (user.role !== 'admin' && order.user_id !== user.userId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
-  return NextResponse.json({ order });
+
+  return NextResponse.json({ order: mapOrder(order) });
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const user = await getCurrentUser();
-  if (!user || user.role !== 'admin')
+  if (!user || user.role !== 'admin') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  }
 
-  await connectDB();
+  const { id } = await params;
   const { status } = await req.json();
+
   const update: any = { status };
   if (status === 'delivered') {
-    update.deliveredAt = new Date();
-    update.isPaid = true;
+    update.delivered_at = new Date().toISOString();
+    update.is_paid = true;
+    update.paid_at = new Date().toISOString();
   }
-  const order = await Order.findByIdAndUpdate(params.id, update, { new: true });
-  return NextResponse.json({ order });
+
+  const { data: updatedOrder, error } = await supabaseAdmin
+    .from('orders')
+    .update(update)
+    .eq('id', id)
+    .select('*, user:users(id,name,email)')
+    .single();
+
+  if (error || !updatedOrder) {
+    return NextResponse.json({ error: error?.message ?? 'Order update failed' }, { status: 500 });
+  }
+
+  return NextResponse.json({ order: mapOrder(updatedOrder) });
 }

@@ -17,19 +17,20 @@ export const supabase = createClient(
   supabaseAnonKey
 );
 
-export const supabaseAdmin =
-  supabaseServiceRoleKey
-    ? createClient(
-        supabaseUrl,
-        supabaseServiceRoleKey,
-        {
-          auth: {
-            persistSession: false,
-            autoRefreshToken: false,
-          },
-        }
-      )
-    : null;
+if (!supabaseServiceRoleKey) {
+  throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY');
+}
+
+export const supabaseAdmin = createClient(
+  supabaseUrl,
+  supabaseServiceRoleKey,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
+);
 
 export interface User {
   id: string;

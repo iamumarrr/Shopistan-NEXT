@@ -48,10 +48,27 @@ export async function POST(req: NextRequest) {
   const taxPrice = +(itemsPrice * 0.1).toFixed(2);
   const totalPrice = itemsPrice + shippingPrice + taxPrice;
 
+  // Validate userId as UUID (simple regex)
+  const isValidUuid = (id: any) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(id);
+  const safeUserId = user?.userId && isValidUuid(user.userId) ? user.userId : null;
+
+  // Resolve user UUID if not valid UUID (e.g., Google OAuth ID)
+  let resolvedUserId = safeUserId;
+  if (!resolvedUserId && user?.email) {
+    const { data: existingUser, error: userLookupError } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('email', user.email)
+      .single();
+    if (!userLookupError && existingUser) {
+      resolvedUserId = existingUser.id;
+    }
+  }
+
   const { data: order, error: orderError } = await supabaseAdmin
     .from('orders')
     .insert({
-      user_id: user?.userId ?? null,
+      user_id: resolvedUserId,
       items: orderItems,
       shipping_address: shippingAddress,
       payment_method: paymentMethod,
@@ -99,13 +116,28 @@ export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // Validate and resolve user UUID
+  const isValidUuid = (id: any) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(id);
+  const safeUserId = user.userId && isValidUuid(user.userId) ? user.userId : null;
+  let resolvedUserId = safeUserId;
+  if (!resolvedUserId && user.email) {
+    const { data: existingUser, error: userLookupError } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('email', user.email)
+      .single();
+    if (!userLookupError && existingUser) {
+      resolvedUserId = existingUser.id;
+    }
+  }
+
   let query = supabaseAdmin
     .from('orders')
     .select('*, user:users(id,name,email)')
     .order('created_at', { ascending: false });
 
   if (user.role !== 'admin') {
-    query = query.eq('user_id', user.userId);
+    query = query.eq('user_id', resolvedUserId);
   }
 
   const { data: orders, error } = await query;
