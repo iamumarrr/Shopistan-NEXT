@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/db';
-import { User } from '@/models/User';
+import { supabaseAdmin } from '@/lib/supabase';
 import { hashPassword, signToken } from '@/lib/auth';
 import { z } from 'zod';
 
@@ -12,26 +11,42 @@ const signupSchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
-    await connectDB();
     const body = await req.json();
     const data = signupSchema.parse(body);
 
-    const exists = await User.findOne({ email: data.email });
-    if (exists) {
+    const { data: existingUser, error: existingError } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('email', data.email)
+      .maybeSingle();
+
+    if (existingError) {
+      return NextResponse.json({ error: existingError.message }, { status: 500 });
+    }
+
+    if (existingUser) {
       return NextResponse.json({ error: 'Email already registered' }, { status: 400 });
     }
 
     const hashed = await hashPassword(data.password);
-    const user = await User.create({ ...data, password: hashed });
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .insert({ ...data, password: hashed, role: 'customer' })
+      .select('*')
+      .single();
+
+    if (error || !user) {
+      return NextResponse.json({ error: error?.message ?? 'Signup failed' }, { status: 500 });
+    }
 
     const token = await signToken({
-      userId: user._id.toString(),
+      userId: user.id,
       email: user.email,
       role: user.role,
     });
 
     const res = NextResponse.json({
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role },
     });
     res.cookies.set('token', token, {
       httpOnly: true,

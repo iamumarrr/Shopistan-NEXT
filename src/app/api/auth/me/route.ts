@@ -1,13 +1,46 @@
 import { NextResponse } from 'next/server';
-import { connectDB } from '@/lib/db';
-import { User } from '@/models/User';
+import { supabaseAdmin, mapUser } from '@/lib/supabase';
 import { getCurrentUser } from '@/lib/auth';
 
 export async function GET() {
-  const session = await getCurrentUser();
-  if (!session) return NextResponse.json({ user: null });
+  try {
+    const session = await getCurrentUser();
 
-  await connectDB();
-  const user = await User.findById(session.userId).select('-password');
-  return NextResponse.json({ user });
+    if (!session) {
+      return NextResponse.json({ user: null });
+    }
+
+    if (!supabaseAdmin) {
+      return NextResponse.json(
+        { error: 'Supabase admin client not configured' },
+        { status: 500 }
+      );
+    }
+
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('id', session.userId)
+      .single();
+
+    if (error) {
+      console.error(error);
+
+      return NextResponse.json(
+        { user: null },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      user: mapUser(user),
+    });
+  } catch (error) {
+    console.error(error);
+
+    return NextResponse.json(
+      { error: 'Internal Server Error' },
+      { status: 500 }
+    );
+  }
 }

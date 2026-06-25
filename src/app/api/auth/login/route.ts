@@ -1,27 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/db';
-import { User } from '@/models/User';
+import { supabaseAdmin } from '@/lib/supabase';
 import { comparePassword, signToken } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   try {
-    await connectDB();
     const { email, password } = await req.json();
 
-    const user = await User.findOne({ email });
-    if (!user) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (error || !user) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
 
     const valid = await comparePassword(password, user.password);
     if (!valid) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
 
     const token = await signToken({
-      userId: user._id.toString(),
+      userId: user.id,
       email: user.email,
       role: user.role,
     });
 
     const res = NextResponse.json({
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role },
     });
     res.cookies.set('token', token, {
       httpOnly: true,

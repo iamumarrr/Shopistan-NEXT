@@ -1,7 +1,6 @@
 import GoogleProvider from 'next-auth/providers/google';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import { connectDB } from '@/lib/db';
-import { User } from '@/models/User';
+import { supabaseAdmin } from './supabase';
 import { comparePassword } from '@/lib/auth';
 
 export const authOptions = {
@@ -13,38 +12,53 @@ export const authOptions = {
     CredentialsProvider({
       name: 'Credentials',
       credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" }
+        email: { label: 'Email', type: 'email' },
+        password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
-        await connectDB();
-        const user = await User.findOne({ email: credentials.email });
-        if (!user || !user.password) return null;
+
+        const { data: user, error } = await supabaseAdmin
+          .from('users')
+          .select('*')
+          .eq('email', credentials.email)
+          .maybeSingle();
+
+        if (error || !user || !user.password) return null;
+
         const isValid = await comparePassword(credentials.password, user.password);
         if (!isValid) return null;
+
         return {
-          id: user._id.toString(),
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
         };
-      }
+      },
     }),
   ],
   callbacks: {
     async signIn({ user, account }: any) {
       if (account?.provider === 'google') {
         if (!user.email) return false;
-        await connectDB();
-        const existingUser = await User.findOne({ email: user.email });
+
+        const { data: existingUser, error } = await supabaseAdmin
+          .from('users')
+          .select('*')
+          .eq('email', user.email)
+          .maybeSingle();
+
+        if (error) return false;
+
         if (!existingUser) {
-          await User.create({
+          const { error: insertError } = await supabaseAdmin.from('users').insert({
             name: user.name || user.email.split('@')[0],
             email: user.email,
             image: user.image || undefined,
             role: 'customer',
           });
+          if (insertError) return false;
         }
       }
       return true;
@@ -54,17 +68,20 @@ export const authOptions = {
         token.id = user.id;
         token.role = (user as any).role || 'customer';
       }
-      
-      if (trigger === "update" && session?.name) {
+
+      if (trigger === 'update' && session?.name) {
         token.name = session.name;
       }
-      
+
       if (!token.role && token.email) {
-        await connectDB();
-        const dbUser = await User.findOne({ email: token.email });
+        const { data: dbUser } = await supabaseAdmin
+          .from('users')
+          .select('role')
+          .eq('email', token.email)
+          .maybeSingle();
         if (dbUser) token.role = dbUser.role;
       }
-      
+
       return token;
     },
     async session({ session, token }: any) {

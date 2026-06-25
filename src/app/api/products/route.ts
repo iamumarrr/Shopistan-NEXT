@@ -1,32 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/db';
-import { Product } from '@/models/Product';
+import { supabaseAdmin, mapProduct } from '@/lib/supabase';
 import { getCurrentUser } from '@/lib/auth';
 
+function toSnakeCase(field: string) {
+  return field.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
+}
+
 export async function GET(req: NextRequest) {
-  await connectDB();
   const { searchParams } = new URL(req.url);
 
-  const search = searchParams.get('search') || '';
-  const category = searchParams.get('category') || '';
+  const search = searchParams.get('search')?.trim() || '';
+  const category = searchParams.get('category')?.trim() || '';
   const minPrice = Number(searchParams.get('minPrice')) || 0;
   const maxPrice = Number(searchParams.get('maxPrice')) || 999999;
   const sort = searchParams.get('sort') || '-createdAt';
   const page = Number(searchParams.get('page')) || 1;
   const limit = Number(searchParams.get('limit')) || 12;
 
-  const query: any = { price: { $gte: minPrice, $lte: maxPrice } };
-  if (search) query.$text = { $search: search };
-  if (category) query.category = category;
+  const start = (page - 1) * limit;
+  const orderDirection = sort.startsWith('-') ? 'desc' : 'asc';
+  const orderField = sort.replace(/^[-+]/, '');
+  const orderColumn = orderField === 'createdAt' ? 'created_at' : toSnakeCase(orderField);
 
-  const [products, total] = await Promise.all([
-    Product.find(query).sort(sort).skip((page - 1) * limit).limit(limit),
-    Product.countDocuments(query),
-  ]);
+  let query = supabaseAdmin.from('products').select('*', { count: 'exact' });
+
+  if (search) {
+    query = query.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+  }
+  if (category) {
+    query = query.eq('category', category);
+  }
+
+  const { data, count, error } = await query
+    .gte('price', minPrice)
+    .lte('price', maxPrice)
+    .order(orderColumn, { ascending: orderDirection === 'asc' })
+    .range(start, start + limit - 1);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({
-    products,
-    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    products: (data ?? []).map(mapProduct),
+    pagination: {
+      page,
+      limit,
+      total: count ?? 0,
+      pages: Math.ceil((count ?? 0) / limit),
+    },
   });
 }
 
@@ -36,9 +58,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
-  await connectDB();
-  const data = await req.json();
-  data.slug = data.name.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
-  const product = await Product.create(data);
-  return NextResponse.json({ product });
+  const payload = await req.json();
+  const slug = `${payload.name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+
+  const { data: product, error } = await supabaseAdmin
+    .from('products')
+    .insert({ ...payload, slug })
+    .select('*')
+    .single();
+
+  if (error || !product) {
+    return NextResponse.json({ error: error?.message ?? 'Product creation failed' }, { status: 500 });
+  }
+
+  return NextResponse.json({ product: mapProduct(product) });
 }

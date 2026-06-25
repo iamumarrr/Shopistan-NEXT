@@ -1,31 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { stripe } from '@/lib/stripe';
-import { Order } from '@/models/Order';
+import { supabaseAdmin } from '@/lib/supabase';
 import { getCurrentUser } from '@/lib/auth';
-import { connectDB } from '@/lib/db';
 
 export async function POST(req: NextRequest) {
   try {
-    await connectDB();
     const user = await getCurrentUser();
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { orderId } = await req.json();
-    const order = await Order.findById(orderId);
+    const { data: order, error } = await supabaseAdmin
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .maybeSingle();
 
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
     if (!order) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
-    // Amount must be in cents
-    const amount = Math.round(order.totalPrice * 100);
-
+    const amount = Math.round(Number(order.total_price ?? 0) * 100);
     const paymentIntent = await stripe.paymentIntents.create({
       amount,
       currency: 'usd',
-      metadata: { orderId: order._id.toString() },
+      metadata: { orderId: order.id },
       automatic_payment_methods: { enabled: true },
     });
 
